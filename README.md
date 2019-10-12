@@ -13,6 +13,8 @@ cah - Cards Against Humanity, played in DM's. This can rate limit large bots via
 
 chatchart - Generates a pie chart to display chat activity over the last 5000 messages. Requested by violetnyte.
 
+dadjokes - Another UltimatePancake cog. Get some dad jokes on command.
+
 dictonary - I stole this from UltimatePancake's v2 cogs, defines words via a dictonary. Only the "define" command for now until the dependency owner updates their files with a pending PR.
 
 dungeon - New users with new accounts will be shuffled off to a locked channel on-join to help mitigate raiders. Please see the dungeon_readme.md file on this repo for more information.
@@ -31,7 +33,11 @@ partycrash - A port of Will's partycrash command from the v2 Admin cog. This cog
 
 pingtime - Show all shards' pingtimes.
 
+pressf - A port/rewrite of NekoTony's v2 pressf cog. Pay your respects by pressing F.
+
 pupper - A cog for Ryan5374. A pet that comes around on an on_message listener and waits for someone to pet it (react with a standard wave emoji), and rewards with credits. Many attributes are configurable.
+
+region - A command to change the voice region of a server. Requires the guild admin or mod role or guild administrator.
 
 retrosign - A v3 port of Anismash's retrosign cog: https://github.com/Anismash/Ani-Cogs/tree/master/retrosign
 

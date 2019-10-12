@@ -2,20 +2,20 @@ import asyncio
 import datetime
 import discord
 import random
+import math
+from typing import Union  # <- Remove this at 3.2
+from babel.numbers import format_decimal  # <- Remove this at 3.2
 from redbot.core import commands, checks, Config, bank
-from redbot.core.utils.chat_formatting import box, pagify
+from redbot.core.utils.chat_formatting import box, pagify  #, humanize_number <- Will be for 3.2
 from redbot.core.utils.menus import menu, DEFAULT_CONTROLS
 
-__version__ = "0.0.5"
-BaseCog = getattr(commands, "Cog", object)
+__version__ = "0.0.6a"
 
-listener = getattr(commands.Cog, "listener", None)  # Trusty + Sinbad
-if listener is None:
+def humanize_number(val: Union[int, float]):  # <- Remove this at 3.2
+    return format_decimal(val, locale="en_US")
 
-    def listener(name=None):
-        return lambda x: x
 
-class TrickOrTreat(BaseCog):
+class TrickOrTreat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.config = Config.get_conf(self, 2710311393, force_registration=True)
@@ -44,8 +44,10 @@ class TrickOrTreat(BaseCog):
         pick = await self.config.guild(ctx.guild).pick()
         if not candy_type:
             candy_type = "candies"
-        if number <= 0:
-            number == 1
+        if number < 0:
+            return await ctx.send("That doesn't sound fun.")
+        if number == 0:
+            return await ctx.send("You pretend to eat a candy.")
         if candy_type in ["candies", "candy"]:
             candy_type = "candies"
         if candy_type in ["lollipops", "lollipop"]:
@@ -132,7 +134,9 @@ class TrickOrTreat(BaseCog):
                 )
 
             pluralcandy = "candy" if number == 1 else "candies"
-            await ctx.send(f"{random.choice(eat_phrase)} {number} {pluralcandy}.")
+            await ctx.send(
+                f"{random.choice(eat_phrase)} {number} {pluralcandy}. (Total eaten: `{humanize_number(await self.config.user(ctx.author).eaten() + number)}` \N{CANDY})"
+            )
             await self.config.user(ctx.author).sickness.set(userdata["sickness"] + (number * 2))
             await self.config.user(ctx.author).candies.set(userdata["candies"] - number)
             await self.config.user(ctx.author).eaten.set(userdata["eaten"] + number)
@@ -159,7 +163,7 @@ class TrickOrTreat(BaseCog):
     @commands.guild_only()
     @checks.mod_or_permissions(administrator=True)
     @commands.command()
-    async def balance(self, ctx):
+    async def totbalance(self, ctx):
         """Check how many candies are 'on the ground' in the guild."""
         pick = await self.config.guild(ctx.guild).pick()
         await ctx.send(f"The guild is currently holding: {pick} \N{CANDY}")
@@ -184,68 +188,111 @@ class TrickOrTreat(BaseCog):
 
     @commands.guild_only()
     @commands.command()
+    @commands.bot_has_permissions(embed_links=True, add_reactions=True)
     async def cboard(self, ctx):
         """Show the candy eating leaderboard."""
         userinfo = await self.config._all_from_scope(scope="USER")
         if not userinfo:
             return await ctx.send("No one has any candy.")
-        message = await ctx.send("Populating leaderboard...")
-        sorted_acc = sorted(userinfo.items(), key=lambda x: x[1]["eaten"], reverse=True)
-        msg = "{name:33}{score:19}\n".format(name="Name", score="Candies Eaten")
-        for i, account in enumerate(sorted_acc):
+        async with ctx.typing():
+            sorted_acc = sorted(userinfo.items(), key=lambda x: x[1]["eaten"], reverse=True)
+        # Leaderboard logic from https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/develop/redbot/cogs/economy/economy.py#L445
+        pound_len = len(str(len(sorted_acc)))
+        score_len = 10
+        header = "{pound:{pound_len}}{score:{score_len}}{name:2}\n".format(
+            pound="#",
+            pound_len=pound_len + 3,
+            score="Candies Eaten",
+            score_len=score_len + 6,
+            name="\N{THIN SPACE}" + "Name"
+            if not str(ctx.author.mobile_status) in ["online", "idle", "dnd"]
+            else "Name",
+        )
+        temp_msg = header
+        for pos, account in enumerate(sorted_acc):
             if account[1]["eaten"] == 0:
                 continue
-            user_idx = i + 1
-            user_obj = await self.bot.fetch_user(account[0])
+            try:
+                if account[0] in [member.id for member in ctx.guild.members]:
+                    user_obj = ctx.guild.get_member(account[0])
+                else:
+                    user_obj = await self.bot.fetch_user(account[0])
+            except AttributeError:
+                user_obj = await self.bot.fetch_user(account[0])
+
             user_name = f"{user_obj.name}#{user_obj.discriminator}"
             if len(user_name) > 28:
                 user_name = f"{user_obj.name[:19]}...#{user_obj.discriminator}"
+            user_idx = pos + 1
             if user_obj == ctx.author:
-                name = f"{user_idx}. <<{user_name}>>"
+                temp_msg += (
+                    f"{f'{user_idx}.': <{pound_len + 2}} "
+                    f"{humanize_number(account[1]['eaten']) + ' 🍬': <{score_len + 4}} <<{user_name}>>\n"
+                )
             else:
-                name = f"{user_idx}. {user_name}"
-            msg += f"{name:33}{account[1]['eaten']}\N{CANDY}\n"
+                temp_msg += (
+                    f"{f'{user_idx}.': <{pound_len + 2}} "
+                    f"{humanize_number(account[1]['eaten']) + ' 🍬': <{score_len + 4}} {user_name}\n"
+                )
 
         page_list = []
-        for page in pagify(msg, delims=["\n"], page_length=1000):
+        pages = 1
+        for page in pagify(temp_msg, delims=["\n"], page_length=1000):
             embed = discord.Embed(
-                colour=await ctx.embed_colour(), description=(box(page, lang="md"))
+                colour=0xF4731C,
+                description=box(f"\N{CANDY} Global leaderboard \N{CANDY}", lang="prolog")
+                + (box(page, lang="md")),
             )
+            embed.set_footer(
+                text=f"Page {humanize_number(pages)}/{humanize_number(math.ceil(len(temp_msg) / 1500))}"
+            )
+            pages += 1
             page_list.append(embed)
-        await message.edit(content=box(f"\N{CANDY} Global Leaderboard \N{CANDY}", lang="prolog"))
-        await menu(ctx, page_list, DEFAULT_CONTROLS)
+        return await menu(ctx, page_list, DEFAULT_CONTROLS)
 
     @commands.guild_only()
     @commands.command()
+    @commands.bot_has_permissions(embed_links=True)
     async def cinventory(self, ctx):
         """Check your inventory."""
         userdata = await self.config.user(ctx.author).all()
-        msg = f"{ctx.author.mention}'s Candy Bag:\n{userdata['candies']} \N{CANDY}"
+        sickness = userdata["sickness"]
+        msg = f"{ctx.author.mention}'s Candy Bag:"
+        em = discord.Embed(color=await ctx.embed_color())
+        em.description = f"{userdata['candies']} \N{CANDY}"
         if userdata["lollipops"]:
-            msg += f"\n{userdata['lollipops']} \N{LOLLIPOP}"
+            em.description += f"\n{userdata['lollipops']} \N{LOLLIPOP}"
         if userdata["stars"]:
-            msg += f"\n{userdata['stars']} \N{WHITE MEDIUM STAR}"
-        if userdata["sickness"] in range(40, 54):
-            msg += "\n\n**Sickness is over 40/100**\n*You don't feel so good...*"
-        if userdata["sickness"] in range(55, 70):
-            msg += "\n\n**Sickness is over 55/100**\n*You don't feel so good...*"
-        if userdata["sickness"] in range(71, 84):
-            msg += "\n\n**Sickness is over 70/100**\n*You really don't feel so good...*"
-        if userdata["sickness"] in range(85, 100):
-            msg += "\n\n**Sickness is over 85/100**\n*The thought of more sugar makes you feel awful...*"
-        if userdata["sickness"] > 100:
-            msg += "\n\n**Sickness is over 100/100**\n*Better wait a while for more candy...*"
-        await ctx.send(msg)
+            em.description += f"\n{userdata['stars']} \N{WHITE MEDIUM STAR}"
+        if sickness in range(41, 56):
+            em.description += f"\n\n**Sickness is over 40/100**\n*You don't feel so good...*"
+        elif sickness in range(56, 71):
+            em.description += f"\n\n**Sickness is over 55/100**\n*You don't feel so good...*"
+        elif sickness in range(71, 86):
+            em.description += (
+                f"\n\n**Sickness is over 70/100**\n*You really don't feel so good...*"
+            )
+        elif sickness in range(86, 101):
+            em.description += f"\n\n**Sickness is over 85/100**\n*The thought of more sugar makes you feel awful...*"
+        elif sickness > 100:
+            em.description += (
+                f"\n\n**Sickness is over 100/100**\n*Better wait a while for more candy...*"
+            )
+        await ctx.send(msg, embed=em)
 
     @commands.guild_only()
     @checks.mod_or_permissions(administrator=True)
     @commands.command()
-    async def cooldown(self, ctx, cooldown_time: int = 0):
+    async def totcooldown(self, ctx, cooldown_time: int = 0):
         """Set the cooldown time for trick or treating on the server."""
-        cooldown = await self.config.guild(ctx.guild).cooldown()
-        if not cooldown_time:
+        if cooldown_time < 0:
+            return await ctx.send("Nice try.")
+        if cooldown_time == 0:
             await self.config.guild(ctx.guild).cooldown.set(300)
-            await ctx.send("Trick or treating cooldown time reset to 5m.")
+            return await ctx.send("Trick or treating cooldown time reset to 5m.")
+        elif 1 <= cooldown_time <= 30:
+            await self.config.guild(ctx.guild).cooldown.set(30)
+            return await ctx.send("Trick or treating cooldown time set to the minimum of 30s.")
         else:
             await self.config.guild(ctx.guild).cooldown.set(cooldown_time)
             await ctx.send(f"Trick or treating cooldown time set to {cooldown_time}s.")
@@ -425,10 +472,10 @@ class TrickOrTreat(BaseCog):
     async def totversion(self, ctx):
         """Trick or Treat version."""
         await ctx.send(
-            f"Trick or Treat, version {__version__}\n\n*0.0.5 updates:*\n**Save values before waiting on messages:\nQuick commands will not overwrite other values**\n\n*0.0.4 updates:*\n**+2% star chance on trick or treat (6% total)\n+5% lollipop chance on trick or treat (25% total)\nMore RP messages\nFix for steal mechanic freezing\n**"
+            f"Trick or Treat, version {__version__}\n\n*0.0.6 updates:*\n**cooldown -> totcooldown\nGeneral cleanup for 2019**\n\n*0.0.5 updates:*\n**Save values before waiting on messages:\nQuick commands will not overwrite other values**\n\n*0.0.4 updates:*\n**+2% star chance on trick or treat (6% total)\n+5% lollipop chance on trick or treat (25% total)\nMore RP messages\nFix for steal mechanic freezing\n**"
         )
 
-    @listener()
+    @commands.Cog.listener()
     async def on_message(self, message):
         if isinstance(message.channel, discord.abc.PrivateChannel):
             return
@@ -446,7 +493,7 @@ class TrickOrTreat(BaseCog):
                     new_sickness = 0
                 await self.config.user(message.author).sickness.set(new_sickness)
 
-        if "trick or treat" not in content:
+        if not content.startswith("trick or treat"):
             return
         toggle = await self.config.guild(message.guild).toggle()
         if not toggle:
@@ -474,7 +521,7 @@ class TrickOrTreat(BaseCog):
                 "The wind starts to pick up as you look for the next house...",
             ]
             return await message.channel.send(random.choice(messages))
-
+        await self.config.user(message.author).last_tot.set(str(now))
         candy = random.randint(1, 25)
         lollipop = random.randint(0, 100)
         star = random.randint(0, 100)
@@ -532,4 +579,3 @@ class TrickOrTreat(BaseCog):
             win_message += "\n**BONUS**: 1 \N{WHITE MEDIUM STAR}"
 
         await message.channel.send(win_message)
-        await self.config.user(message.author).last_tot.set(str(now))
